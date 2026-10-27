@@ -38,14 +38,19 @@ if ($Around) {
 if (-not $windows) { $windows = @(@{ S = $now.AddDays(-$Since); E = $now }) }
 $winText = ($windows | ForEach-Object { '{0:yyyy-MM-dd HH:mm} to {1:yyyy-MM-dd HH:mm}' -f $_.S, $_.E }) -join '; '
 
+$script:capHit = $false   # set by Get-Ev when a query stopped at the 500-event cap
 function Get-Ev([hashtable]$filter) {
+  $script:capHit = $false
   foreach ($w in $windows) {
     $f = $filter.Clone(); $f.StartTime = $w.S; $f.EndTime = $w.E
-    Get-WinEvent -FilterHashtable $f -MaxEvents 500
+    $r = @(Get-WinEvent -FilterHashtable $f -MaxEvents 500)
+    if ($r.Count -ge 500) { $script:capHit = $true }
+    $r
   }
 }
 function Show-Ev($ev, [int]$top = 12) {
   if (-not $ev) { Say '  (none found)'; return }
+  if ($script:capHit) { Say '  (capped at 500 events per time window: there are more than this)' }
   $ev | Group-Object ProviderName, Id | Sort-Object Count -Descending | Select-Object -First $top | ForEach-Object {
     $f = $_.Group[0]
     $msg = ("$($f.Message)" -split "`r?`n")[0]
@@ -71,15 +76,22 @@ Show-Ev $appEv
 Head 'USB / HID / keyboard driver events (cause 5)'
 $devProv = 'Microsoft-Windows-Kernel-PnP', 'Microsoft-Windows-USB-USBHUB3', 'Microsoft-Windows-USB-USBHUB', 'Microsoft-Windows-USB-USBXHCI',
   'Microsoft-Windows-USB-USBPORT', 'Microsoft-Windows-Input-HIDCLASS', 'kbdhid', 'i8042prt', 'mouhid', 'HidBth'
-$devEv = @(Get-Ev @{ LogName = 'System'; ProviderName = $devProv; Level = 1, 2, 3 })
+$devProv = @(Get-WinEvent -ListProvider $devProv -ErrorAction SilentlyContinue | ForEach-Object Name)   # one unregistered name would empty the whole query
+$devCap = $false
 Say '  System log (Kernel-PnP id 219 = a driver failed to load):'
-Show-Ev $devEv
+if ($devProv) {
+  $devEv = @(Get-Ev @{ LogName = 'System'; ProviderName = $devProv; Level = 1, 2, 3 })
+  Show-Ev $devEv
+  $devCap = $devCap -or $script:capHit
+} else { $devEv = @(); Say '  (no PnP providers found: cause 5 not checked)' }
 $cfg = @(Get-Ev @{ LogName = 'Microsoft-Windows-Kernel-PnP/Configuration'; Id = 411 })
 Say '  Kernel-PnP/Configuration, id 411 (a device had a problem starting):'
 Show-Ev $cfg
+$devCap = $devCap -or $script:capHit
 $wd = @(Get-Ev @{ LogName = 'Microsoft-Windows-Kernel-PnP/Driver Watchdog'; Level = 1, 2, 3 })
 Say '  Kernel-PnP/Driver Watchdog (warnings/errors):'
 Show-Ev $wd
+$devCap = $devCap -or $script:capHit
 
 # ---- 3. keyboard devices ----
 Head 'Keyboard / HID devices currently plugged in'
@@ -121,15 +133,13 @@ foreach ($s in 'vgc', 'vgk') {
 }
 Say '  (vgk Running is normal; vgc may show Stopped until a Riot game starts)'
 $vgDir = Join-Path $env:ProgramFiles 'Riot Vanguard\Logs'
-$vgNote = ''
 if (Test-Path $vgDir) {
-  $logs = @(Get-ChildItem $vgDir -File | Sort-Object LastWriteTime -Descending | Select-Object -First 3)
-  Say "  log folder: $vgDir  ($((Get-ChildItem $vgDir -File).Count) files, newest 3 below)"
+  $logs = @(Get-ChildItem $vgDir -File | Sort-Object LastWriteTime -Descending | Select-Object -First 5)
+  Say "  log folder: $vgDir  ($((Get-ChildItem $vgDir -File).Count) files, newest 5 below)"
   foreach ($f in $logs) {
     Say ('    {0}  {1:yyyy-MM-dd HH:mm}  {2} KB' -f $f.Name, $f.LastWriteTime, [int]($f.Length / 1KB))
-    Get-Content $f.FullName -Tail 400 | Where-Object { $_ -match 'error|fail|block|denied|driver|conflict' } |
-      Select-Object -Last 5 | ForEach-Object { Say ('      > ' + $_.Substring(0, [Math]::Min(150, $_.Length))) }
   }
+  Say '  (The logs are encrypted, so their text cannot be read. The clue is the time: a vgc/vgk log written at the moment of a keyboard drop points at Vanguard.)'
 } else { Say "  log folder not found ($vgDir) - Vanguard is probably not installed." }
 
 # ---- 6. Sticky Keys / Filter Keys / layouts ----
@@ -146,7 +156,7 @@ Say ('  Language / layout list ({0}):' -f $langs.Count)
 $langs | ForEach-Object { Say ('    {0}  layouts: {1}' -f $_.LanguageTag, ($_.InputMethodTips -join ', ')) }
 $tipCount = ($langs | ForEach-Object { @($_.InputMethodTips).Count } | Measure-Object -Sum).Sum
 $tog = Get-ItemProperty 'HKCU:\Keyboard Layout\Toggle'
-Say ('  Layout-switch hotkey (1=Alt+Shift, 2=Ctrl+Shift, 3=none): {0}' -f $(if ($tog -and $tog.Hotkey) { $tog.Hotkey } else { '(not set)' }))
+Say ('  Layout-switch hotkey (1=Alt+Shift, 2=Ctrl+Shift, 3=none): {0}' -f $(if ($tog -and $tog.Hotkey) { $tog.Hotkey } else { '(not set = Windows default, Alt+Shift)' }))
 
 # ---- 7. Game Mode / Game Bar ----
 Head 'Game Mode / Game Bar / fullscreen settings (cause 2, cause 1)'
@@ -161,7 +171,7 @@ Show-Reg 'HKCU:\Software\Microsoft\GameBar' 'AutoGameModeEnabled', 'AllowAutoGam
 Show-Reg 'HKCU:\System\GameConfigStore' 'GameDVR_Enabled', 'GameDVR_FSEBehaviorMode', 'GameDVR_HonorUserFSEBehaviorMode'
 Show-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR' 'AppCaptureEnabled'
 $layers = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers'
-$gameLayers = @($layers.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' -and ($_.Name -match 'league|riot|deadlock|project8' -or "$($_.Value)" -match 'DISABLEDXMAXIMIZEDWINDOWEDMODE') })
+$gameLayers = @($layers.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' -and ($_.Name -match 'League of Legends\.exe|project8\.exe|deadlock\.exe' -or "$($_.Value)" -match 'DISABLEDXMAXIMIZEDWINDOWEDMODE') })
 Say '  Per-program compatibility flags on game files (DISABLEDXMAXIMIZEDWINDOWEDMODE = fullscreen optimizations off):'
 if ($gameLayers) { $gameLayers | ForEach-Object { Say ('    {0} = {1}' -f $_.Name, $_.Value) } } else { Say '    (none set)' }
 
@@ -170,12 +180,13 @@ $vanguardHits = @($appEv + $sysEv | Where-Object { ("$($_.ProviderName) $($_.Mes
 $q = New-Object System.Collections.Generic.List[string]
 if ($flags['StickyKeys'] -band 1) { $q.Add('Sticky Keys is ON (cause 4).') }
 if ($flags['Keyboard Response'] -band 1) { $q.Add('Filter Keys is ON (cause 4).') }
+if (($flags['StickyKeys'] -band 4) -or ($flags['Keyboard Response'] -band 4)) { $q.Add('The Sticky Keys / Filter Keys shortcut is on (5x Shift, or holding Shift 8 s; the Windows default). It opens a pop-up (sethc) that can take focus mid-game (cause 4).') }
 if ($tipCount -gt 1) { $q.Add("More than one keyboard layout is installed ($tipCount) (cause 4).") }
 if ($overlayHit) { $q.Add('Overlay programs running: ' + ($overlayHit -join '; ') + ' (cause 2).') }
 if ($periphHit) { $q.Add('Peripheral software running: ' + ($periphHit -join '; ') + ' (cause 3, esp. with Vanguard).') }
 if ($vanguardHits) { $q.Add("$vanguardHits warning/error events mention Vanguard/Riot/peripheral software (cause 3).") }
-$nDev = @($devEv | Where-Object { $_.Id -eq 219 }).Count + $cfg.Count + $wd.Count
-if ($nDev) { $q.Add("$nDev USB/PnP driver events in the window (cause 5).") }
+$nDev = @($devEv + $cfg + $wd | Where-Object { "$($_.Message)" -match 'HID|USB|kbd' }).Count
+if ($nDev) { $q.Add("$nDev USB/HID/keyboard driver events in the window (cause 5)$(if ($devCap) { ' (capped at 500, so the real number may be higher)' })." ) }
 if (-not $q.Count) { $q.Add('Nothing suspicious in the logs or settings. That does NOT rule out cause 1 (game bug); run Watch-Input.ps1 next.') }
 Head 'QUICK READ (hints, not proof - see causes.md)'
 $q | ForEach-Object { Say ('  * ' + $_) }

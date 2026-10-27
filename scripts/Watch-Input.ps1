@@ -5,8 +5,10 @@
   WHAT IS RECORDED (one local CSV: %USERPROFILE%\pc-doctor\watch-<stamp>.csv - it never leaves this PC):
     fg      the program name (and window title, unless -NoTitles) each time the foreground window changes
     keys    once per second: HOW MANY keys were pressed in that second, plus the foreground program name.
-            COUNTS ONLY. Which key is never recorded and never kept in memory. THIS IS NOT A KEYLOGGER.
-    device  a keyboard device plugged in or removed (name + device id)
+            COUNTS ONLY. Which key was pressed is never written to the file or shown on screen. THIS IS NOT A KEYLOGGER.
+            (To count a held key once, it remembers which keys are down right now. That list stays in memory, is overwritten every 250 ms and is gone when it stops.)
+    device  a keyboard device plugged in or removed (name + device id), or "change-event" when Windows
+            reported any device change (not only keyboards) - a timing clue even if the keyboard list looks the same
     marker  the moment you pressed the marker key (default Pause/Break) or clicked the optional marker window
     start / stop   when the monitor began and ended
   HOW IT WORKS (built to be safe next to anti-cheat such as Riot Vanguard):
@@ -49,7 +51,7 @@ namespace PcDoctor {
     [DllImport("user32.dll")] static extern short GetAsyncKeyState(int vk);
     static bool[] prev = new bool[256];
     public static bool IsDown(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
-    // Returns ONLY how many keys went down since the last call. Which keys is never returned or stored.
+    // Returns ONLY how many keys went down since the last call. The up/down table above stays in memory, is overwritten every poll and is never returned or written.
     public static int CountNewKeyDowns(int skipVk) {
       int n = 0;
       for (int vk = 8; vk < 255; vk++) {
@@ -128,7 +130,8 @@ try {
     $fpid = 0; $title = ''
     [PcDoctor.Native]::Foreground([ref]$fpid, [ref]$title)
     if ($fpid -ne $lastPid) {
-      $name = try { [Diagnostics.Process]::GetProcessById($fpid).ProcessName } catch { '?' }
+      $proc = try { [Diagnostics.Process]::GetProcesses() | Where-Object { $_.Id -eq $fpid } | Select-Object -First 1 } catch { $null }   # system process snapshot: no handle to the game is opened
+      $name = if ($proc) { $proc.ProcessName } else { '?' }
       Row 'fg' $name $(if ($NoTitles) { '' } else { $title })
       $lastPid = $fpid; $lastName = $name
     }
@@ -141,7 +144,7 @@ try {
 
     $devEvt = $subscribed -and (Get-Event -SourceIdentifier PcDoctorDev -ErrorAction SilentlyContinue)
     if ($devEvt -or $sw.ElapsedMilliseconds -ge $nextDiff) {
-      if ($devEvt) { Get-Event -SourceIdentifier PcDoctorDev | Remove-Event }
+      if ($devEvt) { Row 'device' 'change-event' ''; Get-Event -SourceIdentifier PcDoctorDev | Remove-Event }
       $nextDiff = $sw.ElapsedMilliseconds + 30000
       $now = Get-Kbd
       foreach ($d in $now) { if ($known -notcontains $d) { Row 'device' 'arrived' $d } }

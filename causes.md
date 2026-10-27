@@ -5,13 +5,17 @@ tool; "check on your PC" means it came from a web source or memory and may diffe
 
 ## Decision table (used after `Watch-Input.ps1`)
 
+First check that `keys` is above 0 while the game was in front and working. If it is 0 for the whole game session, the monitor cannot see this game (for example, the game runs as administrator), so zero rows prove nothing: rerun the monitor from an admin PowerShell.
+
 | What the monitor CSV shows around the marker (game window in front, you say the keyboard was dead) | Points to |
 |---|---|
 | `keys` rows are **above 0** while the game is the foreground program: Windows saw your keys, the game ignored them | 1, 2 or 4 |
-| `keys` rows drop to **0 for the whole dead stretch** and a `device` row (removed/arrived) sits next to it | 5 |
+| `keys` rows drop to **0 for the whole dead stretch** and a `device` row (removed/arrived, or a `change-event` from Windows) sits next to it | 5 |
 | `keys` rows drop to 0 with **no** device row, and the Application log has Vanguard / peripheral-app errors at that time | 3 |
+| `keys` at 0, no device row, no Vanguard/app errors | 2 or 3; retest with overlays and the peripheral app closed |
 | `fg` flips away from the game right before it died (a pop-up, overlay or notification stole focus) | 2 |
-| `keys` are above 0 only after the foreground program changes (alt-tab) | 1 (focus bug) |
+| `fg` flips to `sethc` (the Sticky Keys / Filter Keys pop-up took focus) | 4 |
+| `keys` at 0 while the game is in front (you were pressing keys), back above 0 right after alt-tab | 2 or 3 (an overlay or peripheral app swallowing keys) |
 Not settled? Run the monitor again with one suspect switched off (one change per test).
 
 ## 1. Game-side input-focus bug
@@ -22,7 +26,7 @@ Not settled? Run the monitor again with one suspect switched off (one change per
 ## 2. Overlays and input hooks
 - Confirm: `Read-Logs.ps1` lists running overlay programs (Steam, Discord, NVIDIA, AMD, Xbox Game Bar, Overwolf, Afterburner/RTSS). Then switch ONE off for one test. [4]
 - Fix: Steam > Settings > In Game > untick the overlay; Discord > User Settings > Game Overlay off; Windows Settings > Gaming > Xbox Game Bar off; NVIDIA App / AMD Software > turn the in-game overlay off. Steam Input: per-game Properties > Controller > Disable Steam Input.
-- Verified registry (value may be absent = Windows default): `HKCU\Software\Microsoft\GameBar` (`AutoGameModeEnabled`, `UseNexusForGamebarEnabled`, `ShowStartupPanel`), `HKCU\System\GameConfigStore` (`GameDVR_Enabled`, `GameDVR_FSEBehaviorMode`). Check on your PC: `AppCaptureEnabled` under `HKCU\Software\Microsoft\Windows\CurrentVersion\GameDVR` (absent on the test PC).
+- Verified registry (value may be absent = Windows default): `HKCU\Software\Microsoft\GameBar` (`UseNexusForGamebarEnabled`, `ShowStartupPanel`), `HKCU\System\GameConfigStore` (`GameDVR_Enabled`, `GameDVR_FSEBehaviorMode`). Check on your PC: `AutoGameModeEnabled` under `HKCU\Software\Microsoft\GameBar` and `AppCaptureEnabled` under `HKCU\Software\Microsoft\Windows\CurrentVersion\GameDVR` (both absent on the test PC).
 - Check on your PC: process names for NVIDIA, AMD, Corsair, Wooting and Overwolf are best guesses and were not seen running on the test PC.
 
 ## 3. Peripheral software vs Riot Vanguard (League of Legends, Valorant)
