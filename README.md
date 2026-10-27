@@ -15,7 +15,7 @@ press per second but never which keys, so it is not a keylogger. Windows 10/11 o
 ## With Claude Code
 Paste this one line into Claude Code, then type `/pc-doctor`:
 
-> Install the pc-doctor skill from https://github.com/OWNER/pc-doctor into my Claude Code skills folder (clone it to ~/.claude/skills/pc-doctor, or download the zip if git is missing), then run /pc-doctor.
+> Install the pc-doctor skill from https://github.com/Nickflix3003/pc-doctor into my Claude Code skills folder (clone it to ~/.claude/skills/pc-doctor, or download the zip if git is missing), then run /pc-doctor.
 
 If /pc-doctor is not found, close and reopen Claude Code.
 
